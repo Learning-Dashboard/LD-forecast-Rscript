@@ -1,6 +1,6 @@
 # R scripts for forecasting in Learning Dashboard
 
-R script files including a set of forecasting methods. These scripte acts as wrappers of some state of the art forecasting methods, implemented in packages like the well-known **forecast**. Apart from that, they also implements some other useful aspects, like wrapping the **mongolite** package to allow easy metrics, factors, and strategic indicators gathering from a MongoDB database. The scripts also implement saving and reusing the fitted forecasting models, in order to save time and computation resources.
+R script files including a set of forecasting methods. These scripts act as wrappers of some state of the art forecasting methods, implemented in packages like the well-known **forecast**. Apart from that, they also implement some other useful aspects, like wrapping the **mongolite** package to allow easy metrics, factors, and strategic indicators gathering from a MongoDB database. The scripts also implement saving and reusing the fitted forecasting models, in order to save time and computation resources.
 
 The scripts are intended to be used along with the [LD-forecast](https://github.com/Learning-Dashboard/LD-forecast) library, but are prepared to be used alone as well.
 
