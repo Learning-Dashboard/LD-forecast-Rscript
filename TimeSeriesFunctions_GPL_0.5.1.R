@@ -1,41 +1,55 @@
 library(forecast)
-library(elastic)
+library(mongolite)
 library(forecastHybrid)
 library(prophet)
 
 stringMethods <- c('ARIMA', 'ARIMA_FORCE_SEASONALITY', 'THETA', 'ETS', 'ETSDAMPED',
                    'BAGGEDETS', 'STL', 'NN', 'HYBRID', 'PROPHET')
-directoryToSaveModels <- "forecastModels"
-directoryToSaveForecasts <- "forecastsCache"
+directoryToSaveModels <- "/home/ruser/forecastModels"
+directoryToSaveForecasts <- "/home/ruser/forecastsCache"
 forecastsCacheLength <- 14
+conn <- NULL
+conn_url <- NULL
+conn_database <- NULL
+
 
 getAvailableMethods <- function() {
   stringMethods
 }
 
-elasticConnection <- function(host, path, user, pwd, port) {
-  # CONNECTION TO ELASTICSEARCH NODE
-  connect(es_host = host, es_path = path, es_user= user, es_pwd = pwd,
-          es_port = port, es_transport_schema  = "http")
-  ping()
+mongoDBConnection <- function(host, port, database, username, password) {
+  if (username == "") {
+    conn_url <<- paste("mongodb://", host, ":", port, sep="")
+  } else {
+    conn_url <<- paste("mongodb://", username, ":", password, "@", host, ":", port, sep="")
+  }
+  conn_database <<- database
+  conn <<- mongo(url = conn_url, db = conn_database) # CONNECT TO THE MONGODB DATABASE
 }
 
-searchElement <- function(name, index, tsfrequency, returnDF) {
-  # SEARCH FOR A NORMALIZED ELEMENT AND RETURN THE ASSOCIATED TIME SERIES
-  searchString <- ifelse(grepl("metrics", index, fixed=TRUE), 'metric:', 
-                         ifelse(grepl("factors", index, fixed=TRUE), 'factor:', 'strategic_indicator:'))
-  esearch <- Search(index = index, q = paste(searchString, name, sep = ''),
-                    sort = "evaluationDate:asc", source = "value,evaluationDate", size = 10000)$hits$hits
-  valuesEsearch <- sapply(esearch, function(x) as.numeric(x$`_source`$value))
+searchElement <- function(name, index, tsfrequency, returnDF) { 
+  searchString <- ifelse(grepl("metrics", index, fixed=TRUE), 'metric', 
+                  ifelse(grepl("factors", index, fixed=TRUE), 'factor', 
+                                                              'strategic_indicator'))
+                                                           
+  query <- paste('{ "', searchString, '": "', name, '" }', sep="") # SEARCH FOR A NORMALIZED ELEMENT
+  fields <- paste('{ "value": true, "evaluationDate": true, "_id": false }')
+  limit <- 10000
+  sort <- paste('{"evaluationDate": 1}')
   
-  if (returnDF == FALSE) {
+  collection <- mongo(collection = index, db = conn_database, url = conn_url)
+  esearch <- collection$find(query, fields = fields, limit = limit, sort = sort)
+  
+  valuesEsearch <- as.numeric(esearch$value)
+  datesEsearch <- as.character(esearch$evaluationDate)
+  datesEsearch <- as.Date(datesEsearch)
+  
+  if (returnDF == FALSE) { # RETURN THE ASSOCIATED TIME SERIES
     timeseries <- ts(valuesEsearch, frequency = tsfrequency, start = 0)
     return(timeseries)
   } else {
-  datesEsearch <- sapply(esearch, function(x) as.character(x$`_source`$evaluationDate))
-  datesEsearch <- as.Date(datesEsearch)
-  df <- data.frame("ds" = datesEsearch, "y" = valuesEsearch)
-  return(df)
+    df <- data.frame("ds" = datesEsearch, "y" = valuesEsearch)
+    return(df)
   }
 }
 
@@ -77,7 +91,7 @@ checkForecastCache <- function(name, index, method, horizon) {
     }
   } else {
     print("NOT USING CACHE")
-      return(FALSE)
+    return(FALSE)
   }
 }
 
@@ -109,9 +123,9 @@ forecastArimaWrapper <- function(name, index, forceSeasonality, frequencyts, hor
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, subset, end = horizon)) # SUBSET FIRST 0,HORIZON ELEMENTS
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastArima(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastArima(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainArimaModel(name, index, forceSeasonality, frequencyts)
@@ -148,9 +162,9 @@ forecastThetaWrapper <- function(name, index, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, FUN=function(x) x[1:horizon]))    #(flist, subset, end = horizon)) # SUBSET FIRST 0,HORIZON ELEMENTS
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastTheta(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastTheta(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainThetaModel(name, index, frequencyts)
@@ -187,9 +201,9 @@ forecastETSWrapper <- function(name, index, forceDamped, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, subset, end = horizon)) # SUBSET FIRST 0,HORIZON ELEMENTS
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastETS(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastETS(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainETSModel(name, index, forceDamped, frequencyts)
@@ -226,9 +240,9 @@ forecastBaggedETSWrapper <- function(name, index, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, subset, end = horizon)) # lapply(flist, FUN=function(x) x[1:horizon])
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastBaggedETS(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastBaggedETS(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainBaggedETSModel(name, index, frequencyts)
@@ -265,9 +279,9 @@ forecastSTLWrapper <- function(name, index, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, subset, end = horizon)) # lapply(flist, FUN=function(x) x[1:horizon])
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastArima(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastArima(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainSTLModel(name, index, frequencyts)
@@ -304,9 +318,9 @@ forecastNNWrapper <- function(name, index, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, subset, end = horizon)) # lapply(flist, FUN=function(x) x[1:horizon])
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastNN(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastNN(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainNNModel(name, index, frequencyts)
@@ -322,14 +336,14 @@ trainHybridModel <- function(name, index, cvHorizon, frequencyts) {
   timeseries <- searchElement(name, index, frequencyts, returnDF = FALSE)
   method <- stringMethods[9]
   hybridCVModel <- hybridModel(timeseries,
-                   lambda = "auto", 
-                   windowSize = (length(timeseries)-cvHorizon*2),
-                   weights = "cv.errors", cvHorizon = cvHorizon,
-                   horizonAverage = TRUE, 
-                   a.args = list(stepwise = FALSE, trace = FALSE),
-                   e.args = list(allow.multiplicative.trend = TRUE),
-                   parallel = TRUE,
-                   num.cores = 2)
+                               lambda = "auto", 
+                               windowSize = (length(timeseries)-cvHorizon*2),
+                               weights = "cv.errors", cvHorizon = cvHorizon,
+                               horizonAverage = TRUE, 
+                               a.args = list(stepwise = FALSE, trace = FALSE),
+                               e.args = list(allow.multiplicative.trend = TRUE),
+                               parallel = TRUE,
+                               num.cores = 2)
   save(name, index, method, hybridCVModel, directoryToSaveModels)
   flist <- forecastArima(hybridCVModel, forecastsCacheLength) # STORE FORECAST CACHE
   save(name, index, method, flist, directoryToSaveForecasts)
@@ -351,9 +365,9 @@ forecastHybridWrapper <- function(name, index, frequencyts, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, FUN=function(x) x[1:horizon]))
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastHybrid(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastHybrid(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainHybridModel(name, index, horizon, frequencyts)
@@ -391,9 +405,9 @@ forecastProphetWrapper <- function(name, index, horizon) {
       flist <- load(name, index, method, directoryToSaveForecasts) 
       return(lapply(flist, FUN=function(x) x[1:horizon])) # lapply(flist, FUN=function(x) x[1:horizon])
     } else {
-        model <- load(name, index, method, directoryToSaveModels)
-        flist <- forecastProphet(model, horizon)
-        save(name, index, method, flist, directoryToSaveForecasts)
+      model <- load(name, index, method, directoryToSaveModels)
+      flist <- forecastProphet(model, horizon)
+      save(name, index, method, flist, directoryToSaveForecasts)
     }
   } else {
     model <- trainProphetModel(name, index)
@@ -404,3 +418,4 @@ forecastProphetWrapper <- function(name, index, horizon) {
   }
   return(flist)
 }
+
